@@ -1,4 +1,4 @@
-#include <glad/glad.h>
+﻿#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
@@ -74,6 +74,14 @@ bool keys[1024];
 GLfloat SceneRotateY = 0.0f;
 GLfloat SceneRotateX = 0.0f;
 bool onPlanet = false;
+
+// ===== ORBIT CAMERA STATE (OrbitControls-style) =====
+glm::vec3 orbitTarget = glm::vec3(0.0f, 0.0f, 0.0f); // pusat orbit (Sun di origin)
+float orbitRadius = 600.0f;                      // jarak kamera dari Sun
+float orbitYaw = glm::radians(90.0f);         // sudut horizontal
+float orbitPitch = glm::radians(-40.0f);        // sudut vertikal
+bool orbitPanning = false;                       // right-drag = pan
+
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode)
 {
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
@@ -126,31 +134,80 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 		firstMouse = false;
 	}
 
-	float xoffset = xpos - lastX;
-	float yoffset = lastY - ypos;
+	float xoffset = (float)(xpos - lastX);
+	float yoffset = (float)(lastY - ypos);
 
 	lastX = xpos;
 	lastY = ypos;
 
-	if (onRotate && !camera.FreeCam) {
-		SceneRotateY += yoffset * 0.15f;
-		SceneRotateX += xoffset * 0.15f;
+	//  FREE CAM (F1)
+	if (camera.FreeCam)
+	{
+		camera.ProcessMouseMovement(xoffset, yoffset);
+		return;
 	}
-	else if (camera.FreeCam) {
-		camera.ProcessMouseMovement((float)xoffset, (float)yoffset);
+
+	//  PLANET CAM (1–8)
+	//  Mouse tidak boleh gerakkan kamera
+	if (PlanetView > 0)
+	{
+		return;
+	}
+
+	//  ORBIT CAM (default, PlanetView == 0)
+	// Left drag = ROTATE (orbit)
+	if (onRotate)
+	{
+		float rotateSpeed = 0.005f;
+
+		orbitYaw += xoffset * rotateSpeed;
+		orbitPitch += yoffset * rotateSpeed;
+
+		float maxPitch = glm::radians(89.0f);
+		if (orbitPitch > maxPitch) orbitPitch = maxPitch;
+		if (orbitPitch < -maxPitch) orbitPitch = -maxPitch;
+
+		return;
+	}
+
+	// Right drag = PAN
+	if (orbitPanning)
+	{
+		float panSpeed = orbitRadius * 0.001f;
+
+		orbitTarget -= xoffset * panSpeed * camera.Right;
+		orbitTarget += yoffset * panSpeed * camera.Up;
+
+		return;
 	}
 }
 
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
-	camera.Position += camera.Front * (float)yoffset * 30.0f;
+	// FREE CAM: maju / mundur sepanjang arah pandang
+	if (camera.FreeCam)
+	{
+		camera.Position += camera.Front * (float)yoffset * 30.0f;
+	}
+	// ORBIT CAM: zoom (ubah radius orbit)
+	else if (PlanetView == 0)
+	{
+		float zoomSpeed = 30.0f;
+		orbitRadius -= (float)yoffset * zoomSpeed; // scroll up → mendekat
+
+		if (orbitRadius < 150.0f)  orbitRadius = 150.0f;
+		if (orbitRadius > 3000.0f) orbitRadius = 3000.0f;
+	}
+	// PlanetCam (PlanetView > 0): sementara scroll diabaikan
 }
+
 
 glm::vec2 WorldToScreen(glm::vec3 worldPos, glm::mat4 view, glm::mat4 projection);
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
+	// LEFT MOUSE: ROTATE + CLICK PLANET
 	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
 	{
 		onRotate = true;
@@ -164,21 +221,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 		// Ambil matrix kamera
 		glm::mat4 view = camera.GetViewMatrix();
 		glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom),
-			(float)SCREEN_WIDTH / SCREEN_HEIGHT,
+			(float)SCREEN_WIDTH / (float)SCREEN_HEIGHT,
 			0.1f, 10000.0f);
 
 		// RESET
 		SelectedPlanet = -1;
 		float minDist = 99999.0f;
 
-		// --- DETEKSI KLIK PAKAI WORLD ? SCREEN ---
+		// --- DETEKSI KLIK PAKAI WORLD → SCREEN ---
 		for (int i = 0; i < 8; i++)
 		{
 			glm::vec2 screenPos = WorldToScreen(PlanetsPositions[i], view, proj);
 
-			float dx = mouseX - screenPos.x;
-			float dy = mouseY - screenPos.y;
-			float dist = sqrt(dx * dx + dy * dy);
+			float dx = (float)mouseX - screenPos.x;
+			float dy = (float)mouseY - screenPos.y;
+			float dist = sqrtf(dx * dx + dy * dy);
 
 			float clickableRadius = 50.0f; // makin besar makin gampang diklik
 
@@ -200,8 +257,28 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	}
 
 	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
+	{
 		onRotate = false;
+	}
+
+	// RIGHT MOUSE: PAN ORBITCAM
+	if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS)
+	{
+		orbitPanning = true;
+
+		// sync posisi cursor ke lastX/lastY biar pan awal nggak nyentak
+		glfwGetCursorPos(window, &mouseX, &mouseY);
+		lastX = mouseX;
+		lastY = mouseY;
+		firstMouse = false;
+	}
+
+	if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE)
+	{
+		orbitPanning = false;
+	}
 }
+
 
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -399,6 +476,21 @@ void processInput(GLFWwindow* window)
 		onFreeCam = false;
 		camera.FreeCam = false;
 	}
+
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+	{
+		PlanetView = 0;
+		camera.FreeCam = false;
+		PlanetClicked = false;
+		SelectedPlanet = -1;
+
+		orbitTarget = glm::vec3(0.0f, 0.0f, 0.0f); // fokus ke Sun lagi
+		orbitRadius = 600.0f;
+		orbitYaw = glm::radians(90.0f);
+		orbitPitch = glm::radians(-40.0f);
+	}
+
+
 
 }
 
@@ -744,12 +836,32 @@ int main() {
 	GLfloat camX = 10.0f;
 	GLfloat camZ = 10.0f;
 	
-	camera.Position = glm::vec3(0.0f, 250.0f, -450.0f);
-	camera.Yaw = 90.0f;
-	camera.Pitch = -40.0f;
-	camera.ProcessMouseMovement(xoff, yoff);
 	camera.FreeCam = false;
-	onFreeCam = true;
+	onFreeCam = false;        // default-nya bukan freecam
+
+	// ===== INITIAL ORBITCAM STATE =====
+	orbitTarget = glm::vec3(0.0f, 0.0f, 0.0f);   // pusat di Sun
+	orbitRadius = 1700.0f;                       // bisa kamu kecil/besarkan
+	orbitYaw = glm::radians(120.0f);          // putaran horizontal
+	orbitPitch = glm::radians(25.0f);         // sudut dari atas
+
+	// Hitung posisi kamera dari orbit state ini
+	float cosPitch = cos(orbitPitch);
+	float sinPitch = sin(orbitPitch);
+	float cosYaw = cos(orbitYaw);
+	float sinYaw = sin(orbitYaw);
+
+	camera.Position = orbitTarget + glm::vec3(
+		orbitRadius * cosPitch * cosYaw,
+		orbitRadius * sinPitch,
+		orbitRadius * cosPitch * sinYaw
+	);
+
+	glm::vec3 front = glm::normalize(orbitTarget - camera.Position);
+	camera.Front = front;
+	camera.Right = glm::normalize(glm::cross(front, camera.WorldUp));
+	camera.Up = glm::normalize(glm::cross(camera.Right, front));
+
 	glm::mat4 view;
 	glm::vec3 PlanetsPositions[9];
 	while (!glfwWindowShouldClose(window))
@@ -801,6 +913,25 @@ int main() {
 			// kamera smooth follow (lerp)
 			camera.Position = glm::mix(camera.Position, target + glm::vec3(0, 40, 120), 0.03f);
 			camera.LookAtPos = target;
+		}
+		if (!camera.FreeCam && PlanetView == 0 && !PlanetClicked)
+		{
+			float cosPitch = cos(orbitPitch);
+			float sinPitch = sin(orbitPitch);
+			float cosYaw = cos(orbitYaw);
+			float sinYaw = sin(orbitYaw);
+
+			// Posisi kamera di sphere mengelilingi orbitTarget
+			camera.Position = orbitTarget + glm::vec3(
+				orbitRadius * cosPitch * cosYaw,
+				orbitRadius * sinPitch,
+				orbitRadius * cosPitch * sinYaw
+			);
+
+			glm::vec3 front = glm::normalize(orbitTarget - camera.Position);
+			camera.Front = front;
+			camera.Right = glm::normalize(glm::cross(front, camera.WorldUp));
+			camera.Up = glm::normalize(glm::cross(camera.Right, front));
 		}
 
 		SimpleShader.Use();
@@ -1136,72 +1267,106 @@ int main() {
 		glDepthFunc(GL_LESS);  
 		/* DRAW SKYBOX */
 
+		glm::vec3 target;          // target planet
+		bool planetCamActive = false;
 		/* PLANET TRACKING + SHOW INFO OF PLANET */
 		switch (PlanetView)
 		{
-		case 1:
+		case 1: // MERCURY
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed) * 100.0f * 3.5f * 1.3f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed) * 100.0f * 3.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[0], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[0];
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 2:
+		case 2: // VENUS
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f * 4.5f * 1.2f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f * 4.5f * 1.2f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[1], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[1];
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 3:
+		case 3: // EARTH
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 5.5f * 1.2f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 5.5f * 1.2f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[2], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[2];
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 4:
+		case 4: // MARS
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 6.0f * 1.2f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 6.0f * 1.2f;
 			viewPos = glm::vec3(viewX, 20.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[3], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[3]; // Mars
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 5:
+		case 5: // JUPITER
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 7.5f * 1.3f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 7.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[4], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[4]; // Jupiter
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 6:
+		case 6: // SATURN
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 8.5f * 1.3f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 8.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[5], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[5]; // Saturn
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 7:
+		case 7: // URANUS
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 9.5f * 1.3f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 9.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[6], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[6]; // Uranus
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
-		case 8:
+		case 8: // NEPTUNE
+		{
 			viewX = sin(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 10.5f * 1.3f;
 			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 10.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
-			view = glm::lookAt(viewPos, PlanetsPositions[7], glm::vec3(0.0f, 1.0f, 0.0f));
+
+			target = PlanetsPositions[7]; // Neptune
+			planetCamActive = true;
 			ShowInfo(TextShader);
 			break;
+		}
 
 		case 0:
 		{
@@ -1237,6 +1402,17 @@ int main() {
 
 			break;
 			}
+		}
+
+		if (planetCamActive)
+		{
+			glm::vec3 front = glm::normalize(target - viewPos);
+
+			camera.Position = viewPos;
+			camera.Front = front;
+			camera.Right = glm::normalize(glm::cross(front, camera.WorldUp));
+			camera.Up = glm::normalize(glm::cross(camera.Right, front));
+			camera.FreeCam = false;
 		}
 
 		if (PlanetView > 0)
