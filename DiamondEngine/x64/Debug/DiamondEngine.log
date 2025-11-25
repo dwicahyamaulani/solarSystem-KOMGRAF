@@ -1,0 +1,18 @@
+﻿  main.cpp
+C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\filesystem(12): warning STL4038: The contents of <filesystem> are available only with C++17 or later.
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(47,22): warning C4244: '=': conversion from 'LONG' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(48,20): warning C4244: '=': conversion from 'LONG' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(124,11): warning C4244: '=': conversion from 'double' to 'GLfloat', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(125,11): warning C4244: '=': conversion from 'double' to 'GLfloat', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(129,16): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(130,16): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(132,10): warning C4244: '=': conversion from 'double' to 'GLfloat', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(133,10): warning C4244: '=': conversion from 'double' to 'GLfloat', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(179,13): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(180,13): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(421,10): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(422,10): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(450,54): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(450,40): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\main.cpp(524,24): warning C4838: conversion from 'FT_Pos' to 'GLuint' requires a narrowing conversion
+  DiamondEngine.vcxproj -> D:\cahyaa\Cacaa\SEMESTER 5\KOMGRAF\PROJEK KOMGRAF\OpenGL-SolarSystem\x64\Debug\DiamondEngine.exe

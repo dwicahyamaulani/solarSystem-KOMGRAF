@@ -65,6 +65,11 @@ GLfloat lastY = (GLfloat)(SCREEN_HEIGHT / 2.0);
 float PlanetSpeed = .1f;
 int PlanetView = 0;
 
+glm::vec3 PlanetsPositions[9];
+bool PlanetClicked = false;
+double mouseX = 0, mouseY = 0;
+int SelectedPlanet = -1;
+
 bool keys[1024];
 GLfloat SceneRotateY = 0.0f;
 GLfloat SceneRotateX = 0.0f;
@@ -111,45 +116,323 @@ PlanetInfo Info;
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
+	mouseX = xpos;
+	mouseY = ypos;
+
 	if (firstMouse)
 	{
-		lastX = (GLfloat)xpos;
-		lastY = (GLfloat)ypos;
+		lastX = xpos;
+		lastY = ypos;
 		firstMouse = false;
 	}
 
-	GLfloat xoffset = (GLfloat)(xpos - lastX);
-	GLfloat yoffset = (GLfloat)(lastY - ypos);
-	xoff = xoffset;
-	yoff = yoff;
+	float xoffset = xpos - lastX;
+	float yoffset = lastY - ypos;
 
-	lastX = (GLfloat)xpos;
-	lastY = (GLfloat)ypos;
-	if (onRotate)
-	{
-		SceneRotateY += yoffset * 0.1f;
-		SceneRotateX += xoffset * 0.1f;
+	lastX = xpos;
+	lastY = ypos;
+
+	if (onRotate && !camera.FreeCam) {
+		SceneRotateY += yoffset * 0.15f;
+		SceneRotateX += xoffset * 0.15f;
 	}
-	camera.ProcessMouseMovement(xoffset, yoffset);
+	else if (camera.FreeCam) {
+		camera.ProcessMouseMovement((float)xoffset, (float)yoffset);
+	}
 }
+
+
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
-	if (yoffset == 1)
-		camera.ProcessKeyboard(SCROLL_FORWARD, deltaTime);
-	else
-	{
-		camera.ProcessKeyboard(SCROLL_BACKWARD, deltaTime);
-	}
+	camera.Position += camera.Front * (float)yoffset * 30.0f;
 }
+
+glm::vec2 WorldToScreen(glm::vec3 worldPos, glm::mat4 view, glm::mat4 projection);
+
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
-	if (onFreeCam && !camera.FreeCam)
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
 	{
-		if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS)
-			onRotate = true;
-		else onRotate = false;
+		onRotate = true;
+
+		// Ambil posisi mouse
+		double mx, my;
+		glfwGetCursorPos(window, &mx, &my);
+		mouseX = mx;
+		mouseY = my;
+
+		// Ambil matrix kamera
+		glm::mat4 view = camera.GetViewMatrix();
+		glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom),
+			(float)SCREEN_WIDTH / SCREEN_HEIGHT,
+			0.1f, 10000.0f);
+
+		// RESET
+		SelectedPlanet = -1;
+		float minDist = 99999.0f;
+
+		// --- DETEKSI KLIK PAKAI WORLD ? SCREEN ---
+		for (int i = 0; i < 8; i++)
+		{
+			glm::vec2 screenPos = WorldToScreen(PlanetsPositions[i], view, proj);
+
+			float dx = mouseX - screenPos.x;
+			float dy = mouseY - screenPos.y;
+			float dist = sqrt(dx * dx + dy * dy);
+
+			float clickableRadius = 50.0f; // makin besar makin gampang diklik
+
+			if (dist < clickableRadius)
+			{
+				if (dist < minDist)
+				{
+					minDist = dist;
+					SelectedPlanet = i;
+				}
+			}
+		}
+
+		if (SelectedPlanet != -1)
+		{
+			PlanetClicked = true;
+			std::cout << "PLANET " << SelectedPlanet << " DIKLIK!" << std::endl;
+		}
 	}
+
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
+		onRotate = false;
 }
+
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+	glViewport(0, 0, width, height);
+}
+
+void RenderText(Shader& s, std::string text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
+{
+	// Activate corresponding render state	
+	s.Use();
+	glUniform3f(glGetUniformLocation(s.ID, "textColor"), color.x, color.y, color.z);
+	glActiveTexture(GL_TEXTURE0);
+	glBindVertexArray(textVAO);
+
+	// Iterate through all characters
+	std::string::const_iterator c;
+	for (c = text.begin(); c != text.end(); c++)
+	{
+		Character ch = Characters[*c];
+
+		GLfloat xpos = x + ch.Bearing.x * scale;
+		GLfloat ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
+
+		GLfloat w = ch.Size.x * scale;
+		GLfloat h = ch.Size.y * scale;
+		// Update VBO for each character
+		GLfloat vertices[6][4] = {
+			{ xpos,     ypos + h,   0.0, 0.0 },
+			{ xpos,     ypos,       0.0, 1.0 },
+			{ xpos + w, ypos,       1.0, 1.0 },
+
+			{ xpos,     ypos + h,   0.0, 0.0 },
+			{ xpos + w, ypos,       1.0, 1.0 },
+			{ xpos + w, ypos + h,   1.0, 0.0 }
+		};
+		// Render glyph texture over quad
+		glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+		// Update content of VBO memory
+		glBindBuffer(GL_ARRAY_BUFFER, textVBO);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		// Render quad
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		// Now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+		x += (ch.Advance >> 6) * scale; // Bitshift by 6 to get value in pixels (2^6 = 64)
+	}
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+//KOTAK INFO
+void DrawInfoBackground(float x, float y, float w, float h)
+{
+	glDisable(GL_DEPTH_TEST);
+
+	// kotak hitam transparan
+	glColor4f(0.0f, 0.0f, 0.0f, 0.55f);
+	glBegin(GL_QUADS);
+	glVertex2f(x, y);
+	glVertex2f(x, y - h);
+	glVertex2f(x + w, y - h);
+	glVertex2f(x + w, y);
+	glEnd();
+
+	// border kotak
+	glColor3f(1.0f, 1.0f, 1.0f);
+	glLineWidth(1.5f);
+	glBegin(GL_LINE_LOOP);
+	glVertex2f(x, y);
+	glVertex2f(x + w, y);
+	glVertex2f(x + w, y - h);
+	glVertex2f(x, y - h);
+	glEnd();
+
+	glEnable(GL_DEPTH_TEST);
+}
+
+void processInput(GLFWwindow* window)
+{
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+		camera.ProcessKeyboard(FORWARD, deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		camera.ProcessKeyboard(BACKWARD, deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+		camera.ProcessKeyboard(LEFT, deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+		camera.ProcessKeyboard(RIGHT, deltaTime);
+
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+		SkyBoxExtra = true;
+
+	//   AKTIFKAN FREE CAM (F1)
+// ==============================
+	if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS)
+	{
+		PlanetView = 0;
+		onFreeCam = true;
+		camera.FreeCam = true;
+
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+	{
+		PlanetView = 0;
+		onFreeCam = true;
+		camera.FreeCam = false;
+		camera.Position = glm::vec3(0.0f, 250.0f, -450.0f);
+		camera.Yaw = 90.0f;
+		camera.Pitch = -40.0f;
+		camera.GetViewMatrix();
+		camera.ProcessMouseMovement(xoff, yoff);
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
+	{
+		PlanetView = 1;
+		Info.Name = "MERCURY";
+		Info.OrbitSpeed = "47,87";
+		Info.Mass = "0.32868";
+		Info.Gravity = "0.38";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
+	{
+		PlanetView = 2;
+		Info.Name = "VENUS";
+		Info.OrbitSpeed = "35,02";
+		Info.Mass = "0.32868";
+		Info.Gravity = "0.90";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)
+	{
+		PlanetView = 3;
+		Info.Name = "EARTH";
+		Info.OrbitSpeed = "29,76";
+		Info.Mass = "5.97600";
+		Info.Gravity = "1";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS)
+	{
+		PlanetView = 4;
+		Info.Name = "MARS";
+		Info.OrbitSpeed = "24,13";
+		Info.Mass = "0.63345";
+		Info.Gravity = "0.38";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS)
+	{
+		PlanetView = 5;
+		Info.Name = "JUPITER";
+		Info.OrbitSpeed = "13,07";
+		Info.Mass = "1876.64328";
+		Info.Gravity = "2.55";
+		onFreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS)
+	{
+		PlanetView = 6;
+		Info.Name = "SATURN";
+		Info.OrbitSpeed = "9,67";
+		Info.Mass = "561.80376";
+		Info.Gravity = "1.12";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS)
+	{
+		PlanetView = 7;
+		Info.Name = "URANUS";
+		Info.OrbitSpeed = "6,84";
+		Info.Mass = "86.05440";
+		Info.Gravity = "0.97";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+	if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS)
+	{
+		PlanetView = 8;
+		Info.Name = "NEPTUNE";
+		Info.OrbitSpeed = "5,48";
+		Info.Mass = "101.59200";
+		Info.Gravity = "1.17";
+		onFreeCam = false;
+		camera.FreeCam = false;
+	}
+
+}
+
+glm::vec2 WorldToScreen(glm::vec3 worldPos, glm::mat4 view, glm::mat4 projection)
+{
+	glm::vec4 clipSpacePos = projection * view * glm::vec4(worldPos, 1.0);
+	glm::vec3 ndc = glm::vec3(clipSpacePos) / clipSpacePos.w;
+
+	glm::vec2 screen;
+	screen.x = (ndc.x + 1.0f) * 0.5f * SCREEN_WIDTH;
+	screen.y = (1.0f - ndc.y) * 0.5f * SCREEN_HEIGHT;
+	return screen;
+}
+
+glm::vec3 ScreenPosToWorldRay(double mouseX, double mouseY,
+	int screenWidth, int screenHeight,
+	glm::mat4 view, glm::mat4 projection)
+{
+	// Konversi koordinat layar ? NDC
+	float x = (2.0f * mouseX) / screenWidth - 1.0f;
+	float y = 1.0f - (2.0f * mouseY) / screenHeight;
+
+	glm::vec4 ray_clip = glm::vec4(x, y, -1.0f, 1.0f);
+
+	// NDC ? Eye space
+	glm::vec4 ray_eye = glm::inverse(projection) * ray_clip;
+	ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
+
+	// Eye ? World (ray direction)
+	glm::vec3 ray_world = glm::normalize(glm::vec3(glm::inverse(view) * ray_eye));
+
+	return ray_world;
+}
+
 
 int main() {
 	GetDesktopResolution(SCREEN_WIDTH, SCREEN_HEIGHT); // get resolution for create window
@@ -164,7 +447,7 @@ int main() {
 	/* GLFW INIT */
 
 	/* GLFW WINDOW CREATION */
-	GLFWwindow* window = glfwCreateWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "LearnOpenGL", glfwGetPrimaryMonitor(), NULL);
+	GLFWwindow* window = glfwCreateWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "LearnOpenGL", NULL, NULL);
 	if (window == NULL)
 	{
 		std::cout << "Failed to create GLFW window" << std::endl;
@@ -195,11 +478,11 @@ int main() {
 		std::cout << "ERROR::FREETYPE: Could not init FreeType Library" << std::endl;
 
 	FT_Face face;
-	if (FT_New_Face(ft, "fonts/ff.otf", 0, &face))
+	if (FT_New_Face(ft, "fonts/Montserrat-SemiBold.ttf", 0, &face))
 		std::cout << "ERROR::FREETYPE: Failed to load font" << std::endl;
 
 	// Set size to load glyphs as
-	FT_Set_Pixel_Sizes(face, 0, 48);
+	FT_Set_Pixel_Sizes(face, 0, 64);
 
 	// Disable byte-alignment restriction
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -259,6 +542,8 @@ int main() {
 	Shader SkyboxShader("skybox.vs", "skybox.fs");
 	Shader texShader("simpleVS.vs", "texFS.fs");
 	Shader TextShader("TextShader.vs", "TextShader.fs");
+	Shader RectShader("UIRect.vs", "UIRect.fs");
+
 	/* SHADERS */
 
 	// PROJECTION FOR TEXT RENDER
@@ -508,6 +793,16 @@ int main() {
 		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+		// FOKUS KE PLANET YANG DIKLIK
+		if (PlanetClicked && SelectedPlanet != -1)
+		{
+			glm::vec3 target = PlanetsPositions[SelectedPlanet];
+
+			// kamera smooth follow (lerp)
+			camera.Position = glm::mix(camera.Position, target + glm::vec3(0, 40, 120), 0.03f);
+			camera.LookAtPos = target;
+		}
+
 		SimpleShader.Use();
 
 		glm::mat4 model = glm::mat4(1.0f);
@@ -518,6 +813,7 @@ int main() {
 		
 		SimpleShader.Use();
 		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 10000.0f);
+		view = camera.GetViewMatrix();
 		SimpleShader.setMat4("model", model);
 		SimpleShader.setMat4("view", view);
 		SimpleShader.setMat4("projection", projection);
@@ -536,11 +832,11 @@ int main() {
 		/* SUN */
 
 		/* MERCURY */
-		glm::mat4 model_mercury;
 		double xx = sin(glfwGetTime() * PlanetSpeed) * 100.0f *2.0f *1.3f;
 		double zz = cos(glfwGetTime() * PlanetSpeed) * 100.0f *2.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_mercury);
+		glm::mat4 model_mercury = glm::mat4(1.0f);
 		model_mercury = glm::translate(model_mercury, point);
 		model_mercury = glm::rotate(model_mercury, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_mercury = glm::rotate(model_mercury, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -548,16 +844,18 @@ int main() {
 		PlanetsPositions[0] = glm::vec3(xx, 0.0f, zz);
 		model_mercury = glm::rotate(model_mercury, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_mercury = glm::rotate(model_mercury, (GLfloat)glfwGetTime() * glm::radians(-90.0f) * 0.05f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_mercury = glm::scale(model_mercury, glm::vec3(1.5f));
 		SimpleShader.setMat4("model", model_mercury);
 		Mercury.Draw();
 		/* MERCURY */
 
 		/* VENUS */
-		glm::mat4 model_venus;
 		xx = sin(glfwGetTime() * PlanetSpeed *0.75f) * 100.0f * 3.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f * 3.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_venus);
+		glm::mat4 model_venus = glm::mat4(1.0f);
 		model_venus = glm::translate(model_venus, point);
 		model_venus = glm::rotate(model_venus, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_venus = glm::rotate(model_venus, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -566,16 +864,18 @@ int main() {
 		model_venus = glm::rotate(model_venus, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_venus = glm::rotate(model_venus, glm::radians(-132.5f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_venus = glm::rotate(model_venus, (GLfloat)glfwGetTime() * glm::radians(-132.5f) * 0.012f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_venus = glm::scale(model_venus, glm::vec3(1.5f));
 		SimpleShader.setMat4("model", model_venus);
 		Venus.Draw();
 		/* VENUS */
 
 		/* EARTH */
-		glm::mat4 model_earth;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 4.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 4.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_earth);
+		glm::mat4 model_earth = glm::mat4(1.0f);
 		model_earth = glm::translate(model_earth, point);
 		model_earth = glm::rotate(model_earth, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_earth = glm::rotate(model_earth, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -586,6 +886,9 @@ int main() {
 		model_earth = glm::rotate(model_earth, glm::radians(-33.25f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_earth = glm::rotate(model_earth, (GLfloat)glfwGetTime() * glm::radians(-33.25f) * 2.0f, glm::vec3(0.0f, 0.0f, 1.f));
 		camera.LookAtPos = glm::vec3(model_earth[3][0], model_earth[3][1], model_earth[3][2]);
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_earth = glm::scale(model_earth, glm::vec3(1.5f));
+
 		SimpleShader.setMat4("model", model_earth);
 		Earth.Draw();  
 		
@@ -610,11 +913,11 @@ int main() {
 
 
 		/* MARS */
-		glm::mat4 model_mars;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 5.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 5.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_mars);
+		glm::mat4 model_mars = glm::mat4(1.0f);
 		model_mars = glm::translate(model_mars, point);
 		model_mars = glm::rotate(model_mars, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_mars = glm::rotate(model_mars, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -623,16 +926,18 @@ int main() {
 		model_mars = glm::rotate(model_mars, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_mars = glm::rotate(model_mars, glm::radians(-32.4f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_mars = glm::rotate(model_mars, (GLfloat)glfwGetTime() * glm::radians(-32.4f) * 2.1f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_mars = glm::scale(model_mars, glm::vec3(1.5f));
 		SimpleShader.setMat4("model", model_mars);
 		Mars.Draw();
 		/* MARS */
 
 		/* JUPITER */
-		glm::mat4 model_jupiter;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 6.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 6.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_jupiter);
+		glm::mat4 model_jupiter = glm::mat4(1.0f);
 		model_jupiter = glm::translate(model_jupiter, point);
 		model_jupiter = glm::rotate(model_jupiter, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_jupiter = glm::rotate(model_jupiter, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -641,16 +946,18 @@ int main() {
 		model_jupiter = glm::rotate(model_jupiter, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_jupiter = glm::rotate(model_jupiter, glm::radians(-23.5f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_jupiter = glm::rotate(model_jupiter, (GLfloat)glfwGetTime() * glm::radians(-23.5f) * 4.5f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_jupiter = glm::scale(model_jupiter, glm::vec3(1.5f));
 		SimpleShader.setMat4("model", model_jupiter);
 		Jupiter.Draw();
 		/* JUPITER */
 
 		/* SATURN */
-		glm::mat4 model_saturn;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 7.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 7.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_saturn);
+		glm::mat4 model_saturn = glm::mat4(1.0f);
 		model_saturn = glm::translate(model_saturn, point);
 		model_saturn = glm::rotate(model_saturn, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_saturn = glm::rotate(model_saturn, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -660,16 +967,19 @@ int main() {
 		model_saturn = glm::rotate(model_saturn, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_saturn = glm::rotate(model_saturn, glm::radians(-34.7f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_saturn = glm::rotate(model_saturn, (GLfloat)glfwGetTime() * glm::radians(-34.7f) * 4.48f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_saturn = glm::scale(model_saturn, glm::vec3(1.5f));
+
 		SimpleShader.setMat4("model", model_saturn);
 		Saturn.Draw();
 		/* SATURN */
 
 		/* URANUS */
-		glm::mat4 model_uranus;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 8.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 8.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_uranus);
+		glm::mat4 model_uranus = glm::mat4(1.0f);
 		model_uranus = glm::translate(model_uranus, point);
 		model_uranus = glm::rotate(model_uranus, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_uranus = glm::rotate(model_uranus, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -678,17 +988,20 @@ int main() {
 		model_uranus = glm::rotate(model_uranus, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_uranus = glm::rotate(model_uranus, glm::radians(-99.0f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_uranus = glm::rotate(model_uranus, (GLfloat)glfwGetTime() * glm::radians(-99.0f) * 4.5f, glm::vec3(0.0f, 0.0f, 1.f));
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_uranus = glm::scale(model_uranus, glm::vec3(1.5f));
+
 		SimpleShader.setMat4("model", model_uranus);
 		Uranus.Draw();
 		/* URANUS */
 
 		/* NEPTUNE */
-		glm::mat4 model_neptune;
 		xx = sin(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 9.0f *1.3f;
 		zz = cos(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 9.0f *1.3f;
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_neptune);
 
+		glm::mat4 model_neptune = glm::mat4(1.0f);
 		model_neptune = glm::translate(model_neptune, point);
 		model_neptune = glm::rotate(model_neptune, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_neptune = glm::rotate(model_neptune, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -697,7 +1010,9 @@ int main() {
 		model_neptune = glm::rotate(model_neptune, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
 		model_neptune = glm::rotate(model_neptune, glm::radians(-30.2f), glm::vec3(0.0f, 1.0f, 0.f));
 		model_neptune = glm::rotate(model_neptune, (GLfloat)glfwGetTime() * glm::radians(-30.2f) * 4.0f, glm::vec3(0.0f, 0.0f, 1.f));
-		
+		if (PlanetClicked && SelectedPlanet == 0)
+			model_neptune = glm::scale(model_neptune, glm::vec3(1.5f));
+
 		SimpleShader.setMat4("model", model_neptune);
 		Neptune.Draw();
 		/* NEPTUNE */
@@ -728,6 +1043,53 @@ int main() {
 		SimpleShader.setMat4("model", modelorb);
 		glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)orbVert.size() / 3);
 		/* ORBITS */
+
+		// =======================================
+		// AUTO ZOOM KE PLANET YANG DIKLIK
+		// =======================================
+		if (PlanetClicked && SelectedPlanet != -1)
+		{
+			glm::vec3 target = PlanetsPositions[SelectedPlanet];
+
+			camera.Position = glm::mix(camera.Position, target + glm::vec3(0, 40, 120), 0.03f);
+			camera.LookAtPos = target;
+		}
+
+		// =======================================
+		// PLANET DESCRIPTION BOX
+		// =======================================
+		if (PlanetClicked && SelectedPlanet != -1)
+		{
+			float boxX = 20;
+			float boxY = SCREEN_HEIGHT - 20;
+			float boxW = 420;
+			float boxH = 200;
+
+			DrawInfoBackground(boxX, boxY, boxW, boxH);
+
+			switch (SelectedPlanet)
+			{
+			case 0:
+				RenderText(TextShader, "MERCURY", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
+				RenderText(TextShader, "Smallest planet", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
+				RenderText(TextShader, "No atmosphere", boxX + 20, boxY - 105, 0.45f, glm::vec3(1));
+				break;
+
+			case 1:
+				RenderText(TextShader, "VENUS", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
+				RenderText(TextShader, "Hottest planet", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
+				RenderText(TextShader, "Toxic atmosphere", boxX + 20, boxY - 105, 0.45f, glm::vec3(1));
+				break;
+
+			case 2:
+				RenderText(TextShader, "EARTH", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
+				RenderText(TextShader, "The only planet with life", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
+				break;
+
+				// lanjutkan untuk planet lain...
+			}
+		}
+
 
 		/* SATURN RINGS */
 		glActiveTexture(GL_TEXTURE0);
@@ -778,84 +1140,105 @@ int main() {
 		switch (PlanetView)
 		{
 		case 1:
-			viewX = sin(glfwGetTime() * PlanetSpeed) * 100.0f *3.5f * 1.3f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed) * 100.0f *3.5f * 1.3f;
+			viewX = sin(glfwGetTime() * PlanetSpeed) * 100.0f * 3.5f * 1.3f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed) * 100.0f * 3.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[0], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 2:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f *4.5f * 1.2f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f *4.5f * 1.2f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f * 4.5f * 1.2f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.75f) * 100.0f * 4.5f * 1.2f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[1], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 3:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f *5.5f * 1.2f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f *5.5f * 1.2f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 5.5f * 1.2f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.55f) * 100.0f * 5.5f * 1.2f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[2], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 4:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f *6.0f * 1.2f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f *6.0f * 1.2f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 6.0f * 1.2f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.35f) * 100.0f * 6.0f * 1.2f;
 			viewPos = glm::vec3(viewX, 20.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[3], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 5:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f *7.5f * 1.3f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f *7.5f * 1.3f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 7.5f * 1.3f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.2f) * 100.0f * 7.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[4], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 6:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f *8.5f * 1.3f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f *8.5f * 1.3f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 8.5f * 1.3f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.15f) * 100.0f * 8.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[5], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 7:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f *9.5f * 1.3f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f *9.5f * 1.3f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 9.5f * 1.3f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.1f) * 100.0f * 9.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[6], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 8:
-			viewX = sin(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f *10.5f * 1.3f;
-			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f *10.5f * 1.3f;
+			viewX = sin(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 10.5f * 1.3f;
+			viewZ = cos(glfwGetTime() * PlanetSpeed * 0.08f) * 100.0f * 10.5f * 1.3f;
 			viewPos = glm::vec3(viewX, 50.0f, viewZ);
 			view = glm::lookAt(viewPos, PlanetsPositions[7], glm::vec3(0.0f, 1.0f, 0.0f));
 			ShowInfo(TextShader);
 			break;
 
 		case 0:
-			view = camera.GetViewMatrix();
+		{
+			float boxX = 20.0f;
+			float boxY = SCREEN_HEIGHT - 20.0f;
+			float boxW = 360.0f;
+			float boxH = 180.0f;
 
-			RenderText(TextShader, "SOLAR SYSTEM ", 25.0f, SCREEN_HEIGHT - 30.0f, 0.50f, glm::vec3(0.7f, 0.7f, 0.11f));
-			RenderText(TextShader, "STARS: 1 (SUN) ", 25.0f, SCREEN_HEIGHT - 55.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
-			RenderText(TextShader, "PLANETS: 8 (MAYBE 9) ", 25.0f, SCREEN_HEIGHT - 80.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
-			RenderText(TextShader, "SATELLITES: 415 ", 25.0f, SCREEN_HEIGHT - 105.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
-			RenderText(TextShader, "COMMETS: 3441 ", 25.0f, SCREEN_HEIGHT - 130.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
+			// panggil kotaknya dulu
+			DrawInfoBackground(boxX, boxY, boxW, boxH);
 
-			if (camera.FreeCam)
-				RenderText(TextShader, "FREE CAM ", SCREEN_WIDTH - 200.0f, SCREEN_HEIGHT - 30.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
-			if (onFreeCam)
-				RenderText(TextShader, "STATIC CAM ", SCREEN_WIDTH - 200.0f, SCREEN_HEIGHT - 30.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
+			// Title
+			RenderText(TextShader, "SOLAR SYSTEM INFO",
+				boxX + 15, boxY - 30, 0.55f, glm::vec3(1.0f, 0.95f, 0.2f));
+
+			// Left label & right value columns
+			float L = boxX + 20;
+			float R = boxX + 180;
+			float row = boxY - 65;
+			float gap = 28;
+
+			RenderText(TextShader, "Sun", L, row, 0.45f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 1", R, row, 0.45f, glm::vec3(1.0f));
+
+			RenderText(TextShader, "Planets", L, row - gap, 0.45f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 8 (maybe 9)", R, row - gap, 0.45f, glm::vec3(1.0f));
+
+			RenderText(TextShader, "Satellites", L, row - gap * 2, 0.45f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 415", R, row - gap * 2, 0.45f, glm::vec3(1.0f));
+
+			RenderText(TextShader, "Comets", L, row - gap * 3, 0.45f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 3441", R, row - gap * 3, 0.45f, glm::vec3(1.0f));
+
 			break;
+			}
 		}
+
 		if (PlanetView > 0)
 			RenderText(TextShader, "PLANET CAM ", SCREEN_WIDTH - 200.0f, SCREEN_HEIGHT - 30.0f, 0.35f, glm::vec3(0.7f, 0.7f, 0.11f));
 		/* PLANET TRACKING + SHOW INFO OF PLANET */
@@ -871,129 +1254,6 @@ int main() {
 	glDeleteBuffers(1, &VBO_t);
 	glfwTerminate();
 	return 0;
-}
-
-void processInput(GLFWwindow *window)
-{
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, true);
-
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-		camera.ProcessKeyboard(FORWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-		camera.ProcessKeyboard(BACKWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		camera.ProcessKeyboard(LEFT, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		camera.ProcessKeyboard(RIGHT, deltaTime);
-
-	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
-		SkyBoxExtra = true;
-
-	if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS)
-	{
-		PlanetView = 0;
-		onFreeCam = false;
-		camera.FreeCam = true;
-	}
-
-	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-	{
-		PlanetView = 0;
-		onFreeCam = true;
-		camera.FreeCam = false;
-		camera.Position = glm::vec3(0.0f, 250.0f, -450.0f);
-		camera.Yaw = 90.0f;
-		camera.Pitch = -40.0f;
-		camera.GetViewMatrix();
-		camera.ProcessMouseMovement(xoff,yoff);
-	}
-
-	if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
-	{
-		PlanetView = 1;
-		Info.Name = "MERCURY";
-		Info.OrbitSpeed = "47,87";
-		Info.Mass = "0.32868";
-		Info.Gravity = "0.38";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
-	{
-		PlanetView = 2;
-		Info.Name = "VENUS";
-		Info.OrbitSpeed = "35,02";
-		Info.Mass = "0.32868";
-		Info.Gravity = "0.90";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)
-	{
-		PlanetView = 3;
-		Info.Name = "EARTH";
-		Info.OrbitSpeed = "29,76";
-		Info.Mass = "5.97600";
-		Info.Gravity = "1";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS)
-	{
-		PlanetView = 4;
-		Info.Name = "MARS";
-		Info.OrbitSpeed = "24,13";
-		Info.Mass = "0.63345";
-		Info.Gravity = "0.38";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS)
-	{
-		PlanetView = 5;
-		Info.Name = "JUPITER";
-		Info.OrbitSpeed = "13,07";
-		Info.Mass = "1876.64328";
-		Info.Gravity = "2.55";
-		onFreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS)
-	{
-		PlanetView = 6;
-		Info.Name = "SATURN";
-		Info.OrbitSpeed = "9,67";
-		Info.Mass = "561.80376";
-		Info.Gravity = "1.12";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS)
-	{
-		PlanetView = 7;
-		Info.Name = "URANUS";
-		Info.OrbitSpeed = "6,84";
-		Info.Mass = "86.05440";
-		Info.Gravity = "0.97";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-	if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS)
-	{
-		PlanetView = 8;
-		Info.Name = "NEPTUNE";
-		Info.OrbitSpeed = "5,48";
-		Info.Mass = "101.59200";
-		Info.Gravity = "1.17";
-		onFreeCam = false;
-		camera.FreeCam = false;
-	}
-
-} 
-
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
-{
-	glViewport(0, 0, width, height);
 }
 
 unsigned int loadCubemap(std::vector<std::string> faces)
@@ -1066,49 +1326,6 @@ unsigned int loadTexture(char const * path)
 	}
 
 	return textureID;
-}
-void RenderText(Shader &s, std::string text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
-{
-	// Activate corresponding render state	
-	s.Use();
-	glUniform3f(glGetUniformLocation(s.ID, "textColor"), color.x, color.y, color.z);
-	glActiveTexture(GL_TEXTURE0);
-	glBindVertexArray(textVAO);
-
-	// Iterate through all characters
-	std::string::const_iterator c;
-	for (c = text.begin(); c != text.end(); c++)
-	{
-		Character ch = Characters[*c];
-
-		GLfloat xpos = x + ch.Bearing.x * scale;
-		GLfloat ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
-
-		GLfloat w = ch.Size.x * scale;
-		GLfloat h = ch.Size.y * scale;
-		// Update VBO for each character
-		GLfloat vertices[6][4] = {
-			{ xpos,     ypos + h,   0.0, 0.0 },
-			{ xpos,     ypos,       0.0, 1.0 },
-			{ xpos + w, ypos,       1.0, 1.0 },
-
-			{ xpos,     ypos + h,   0.0, 0.0 },
-			{ xpos + w, ypos,       1.0, 1.0 },
-			{ xpos + w, ypos + h,   1.0, 0.0 }
-		};
-		// Render glyph texture over quad
-		glBindTexture(GL_TEXTURE_2D, ch.TextureID);
-		// Update content of VBO memory
-		glBindBuffer(GL_ARRAY_BUFFER, textVBO);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		// Render quad
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		// Now advance cursors for next glyph (note that advance is number of 1/64 pixels)
-		x += (ch.Advance >> 6) * scale; // Bitshift by 6 to get value in pixels (2^6 = 64)
-	}
-	glBindVertexArray(0);
-	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void ShowInfo(Shader &s)
