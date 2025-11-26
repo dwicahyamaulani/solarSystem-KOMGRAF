@@ -30,10 +30,12 @@
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow *window);
+bool keyPressedE = false;
 void RenderText(Shader &s, std::string text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color);
 unsigned int loadTexture(char const * path);
 unsigned int loadCubemap(std::vector<std::string> faces);
 void ShowInfo(Shader &s);
+glm::vec2 WorldToScreen(glm::vec3 worldPos, glm::mat4 view, glm::mat4 projection);
 void GetDesktopResolution(float& horizontal, float& vertical)
 {
 	RECT desktop;
@@ -69,6 +71,18 @@ glm::vec3 PlanetsPositions[9];
 bool PlanetClicked = false;
 double mouseX = 0, mouseY = 0;
 int SelectedPlanet = -1;
+
+int hoveredPlanet = -1;               
+
+bool isMovingToPlanet = false;   
+bool isZoomingOut = false;  
+
+glm::vec3 initialCameraPos; 
+glm::vec3 initialTargetPos; 
+glm::vec3 targetCameraPos;   
+
+bool showPlanetInfo = false;
+
 
 bool keys[1024];
 GLfloat SceneRotateY = 0.0f;
@@ -113,6 +127,7 @@ struct Character {
 };
 std::map<GLchar, Character> Characters;
 GLuint textVAO, textVBO;
+GLuint uiBackgroundTex;
 
 struct PlanetInfo {
 	std::string Name;
@@ -180,6 +195,41 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 
 		return;
 	}
+
+	// ==========================
+	// HOVER PLANET (ORBIT CAM)
+	// ==========================
+	if (!camera.FreeCam && PlanetView == 0 && !onRotate && !orbitPanning && !PlanetClicked)
+	{
+		glm::mat4 view = camera.GetViewMatrix();
+		glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom),
+			(float)SCREEN_WIDTH / (float)SCREEN_HEIGHT,
+			0.1f, 10000.0f);
+
+		hoveredPlanet = -1;
+		float minDist = 99999.0f;
+		float hoverRadius = 60.0f; // boleh kamu kecilin/besarin
+
+		for (int i = 0; i < 8; i++)
+		{
+			glm::vec2 screenPos = WorldToScreen(PlanetsPositions[i], view, proj);
+
+			float dx = (float)mouseX - screenPos.x;
+			float dy = (float)mouseY - screenPos.y;
+			float dist = sqrtf(dx * dx + dy * dy);
+
+			if (dist < hoverRadius && dist < minDist)
+			{
+				minDist = dist;
+				hoveredPlanet = i;
+			}
+		}
+	}
+	else
+	{
+		// kalau lagi FreeCam / PlanetCam / drag → nggak ada hover
+		hoveredPlanet = -1;
+	}
 }
 
 
@@ -202,8 +252,6 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 	// PlanetCam (PlanetView > 0): sementara scroll diabaikan
 }
 
-
-glm::vec2 WorldToScreen(glm::vec3 worldPos, glm::mat4 view, glm::mat4 projection);
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
@@ -252,7 +300,68 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 		if (SelectedPlanet != -1)
 		{
 			PlanetClicked = true;
+			onRotate = false;
+			isMovingToPlanet = true;
+			isZoomingOut = false;
+			showPlanetInfo = false;
+			hoveredPlanet = -1;   // matikan hover saat sudah klik
+
+			// Simpan posisi OrbitCam sebelum zoom (buat balik lagi nanti)
+			initialCameraPos = camera.Position;
+			initialTargetPos = orbitTarget;   // sekarang orbitTarget = Sun / hasil pan
+
+			// Planet yang diklik jadi pusat baru
+			orbitTarget = PlanetsPositions[SelectedPlanet];
+
+			// Arah dari planet ke kamera sekarang
+			glm::vec3 dir = camera.Position - orbitTarget;
+			float distNow = glm::length(dir);
+			if (distNow < 1.0f) dir = glm::vec3(0.0f, 0.0f, 1.0f);
+			else               dir = glm::normalize(dir);
+
+			// Jarak yang kamu mau saat “close-up”
+			float desiredDist = 150.0f;   // nanti bisa kamu tweak per-planet
+
+			targetCameraPos = orbitTarget + dir * desiredDist;
+			orbitRadius = desiredDist;  // supaya nanti muter pakai radius ini juga
+
 			std::cout << "PLANET " << SelectedPlanet << " DIKLIK!" << std::endl;
+		}
+
+		if (showPlanetInfo && PlanetClicked && SelectedPlanet != -1)
+		{
+			// Ambil posisi mouse (sudah ada mx,my)
+			double mx = mouseX;
+			double my = mouseY;
+
+			float boxX = 20.0f;
+			float boxY = SCREEN_HEIGHT - 20.0f;
+			float boxW = 420.0f;
+			float boxH = 200.0f;
+
+			float closeSize = 24.0f;
+			float closeX = boxX + boxW - closeSize - 20.0f;
+			float closeY = boxY - 20.0f;
+
+			// area klik X (sedikit toleransi)
+			float padding = 10.0f;
+			float minX = closeX - padding;
+			float maxX = closeX + closeSize + padding;
+			float minY = closeY - closeSize - padding;
+			float maxY = closeY + padding;
+
+			if (mx >= minX && mx <= maxX && my >= minY && my <= maxY)
+			{
+				// Mulai animasi zoom out
+				isZoomingOut = true;
+				isMovingToPlanet = false;
+				showPlanetInfo = false;
+
+				// Balik ke orbit global (Sun)
+				orbitTarget = initialTargetPos;      // sudah disimpan waktu klik planet
+				// target posisi kamera orbit awal
+				// (initialCameraPos juga sudah disimpan)
+			}
 		}
 	}
 
@@ -330,32 +439,61 @@ void RenderText(Shader& s, std::string text, GLfloat x, GLfloat y, GLfloat scale
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-//KOTAK INFO
-void DrawInfoBackground(float x, float y, float w, float h)
+// KOTAK INFO – digambar pakai pipeline text (VAO/VBO + TextShader)
+void DrawInfoBackground(Shader& textShader, float x, float y, float w, float h)
 {
 	glDisable(GL_DEPTH_TEST);
 
-	// kotak hitam transparan
-	glColor4f(0.0f, 0.0f, 0.0f, 0.55f);
-	glBegin(GL_QUADS);
-	glVertex2f(x, y);
-	glVertex2f(x, y - h);
-	glVertex2f(x + w, y - h);
-	glVertex2f(x + w, y);
-	glEnd();
+	textShader.Use();
+	glActiveTexture(GL_TEXTURE0);
+	glBindVertexArray(textVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, textVBO);
 
-	// border kotak
-	glColor3f(1.0f, 1.0f, 1.0f);
-	glLineWidth(1.5f);
-	glBegin(GL_LINE_LOOP);
-	glVertex2f(x, y);
-	glVertex2f(x + w, y);
-	glVertex2f(x + w, y - h);
-	glVertex2f(x, y - h);
-	glEnd();
+	GLint colorLoc = glGetUniformLocation(textShader.ID, "textColor");
 
+	auto drawQuad = [&](float x0, float y0, float x1, float y1, const glm::vec3& color)
+		{
+			glUniform3f(colorLoc, color.r, color.g, color.b);
+
+			GLfloat vertices[6][4] = {
+				{ x0, y1, 0.0f, 0.0f },
+				{ x0, y0, 0.0f, 1.0f },
+				{ x1, y0, 1.0f, 1.0f },
+
+				{ x0, y1, 0.0f, 0.0f },
+				{ x1, y0, 1.0f, 1.0f },
+				{ x1, y1, 1.0f, 0.0f }
+			};
+
+			glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+			glBindTexture(GL_TEXTURE_2D, uiBackgroundTex);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+		};
+
+	// 1) BORDER PUTIH TIPIS
+	float border = 3.0f;
+	drawQuad(
+		x - border,
+		y + border,
+		x + w + border,
+		y - h - border,
+		glm::vec3(1.0f, 1.0f, 1.0f) // putih
+	);
+
+	// 2) PANEL DALAM – biru tua pekat (sama buat solar & planet)
+	drawQuad(
+		x,
+		y,
+		x + w,
+		y - h,
+		glm::vec3(0.02f, 0.04f, 0.16f) // navy gelap
+	);
+
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
 	glEnable(GL_DEPTH_TEST);
 }
+
 
 void processInput(GLFWwindow* window)
 {
@@ -372,7 +510,17 @@ void processInput(GLFWwindow* window)
 		camera.ProcessKeyboard(RIGHT, deltaTime);
 
 	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
-		SkyBoxExtra = true;
+	{
+		if (!keyPressedE)
+		{
+			SkyBoxExtra = !SkyBoxExtra; // toggle starfield <-> blue
+			keyPressedE = true;
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_RELEASE)
+	{
+		keyPressedE = false;
+	}
 
 	//   AKTIFKAN FREE CAM (F1)
 // ==============================
@@ -481,13 +629,15 @@ void processInput(GLFWwindow* window)
 	{
 		PlanetView = 0;
 		camera.FreeCam = false;
+		onFreeCam = false;
 		PlanetClicked = false;
 		SelectedPlanet = -1;
 
-		orbitTarget = glm::vec3(0.0f, 0.0f, 0.0f); // fokus ke Sun lagi
-		orbitRadius = 600.0f;
-		orbitYaw = glm::radians(90.0f);
-		orbitPitch = glm::radians(-40.0f);
+		// balik ke default OrbitCam yang sama dengan init
+		orbitTarget = glm::vec3(0.0f, 0.0f, 0.0f);
+		orbitRadius = 1700.0f;
+		orbitYaw = glm::radians(120.0f);
+		orbitPitch = glm::radians(25.0f);
 	}
 
 
@@ -618,10 +768,24 @@ int main() {
 		Characters.insert(std::pair<GLchar, Character>(c, character));
 	}
 	glBindTexture(GL_TEXTURE_2D, 0);
+
 	// Destroy FreeType once we're finished
 	FT_Done_Face(face);
 	FT_Done_FreeType(ft);
 	/* CONFIGURATION FOR TEXT RENDER */
+
+	// === INIT 1x1 WHITE TEXTURE UNTUK PANEL UI ===
+	unsigned char whitePixel = 255;
+	glGenTextures(1, &uiBackgroundTex);
+	glBindTexture(GL_TEXTURE_2D, uiBackgroundTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+		1, 1, 0, GL_RED, GL_UNSIGNED_BYTE, &whitePixel);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	// ===============================================
 
 
 	glEnable(GL_DEPTH_TEST);
@@ -863,13 +1027,22 @@ int main() {
 	camera.Up = glm::normalize(glm::cross(camera.Right, front));
 
 	glm::mat4 view;
-	glm::vec3 PlanetsPositions[9];
 	while (!glfwWindowShouldClose(window))
 	{
-		
+		// UPDATE SIZE WINDOW AKTUAL
+		int winW, winH;
+		glfwGetWindowSize(window, &winW, &winH);
+		SCREEN_WIDTH = (float)winW;
+		SCREEN_HEIGHT = (float)winH;
+
 		GLfloat currentFrame = (GLfloat)glfwGetTime();
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
+
+		glm::mat4 Text_projection = glm::ortho(0.0f, SCREEN_WIDTH, 0.0f, SCREEN_HEIGHT);
+		TextShader.Use();
+		glUniformMatrix4fv(glGetUniformLocation(TextShader.ID, "projection"),
+			1, GL_FALSE, glm::value_ptr(Text_projection));
 
 		/* ZOOM CONTROL */
 		if (!camera.FreeCam)
@@ -892,6 +1065,36 @@ int main() {
 
 		processInput(window); // input
 
+		if (!camera.FreeCam && PlanetView == 0 &&
+			PlanetClicked && SelectedPlanet != -1 &&
+			!isMovingToPlanet && !isZoomingOut)
+		{
+			orbitTarget = PlanetsPositions[SelectedPlanet];
+		}
+
+		// UPDATE ORBIT CAMERA
+		if (!camera.FreeCam && PlanetView == 0 && !isMovingToPlanet && !isZoomingOut)
+		{
+			// Hitung posisi kamera dari orbit state
+			float cosPitch = cos(orbitPitch);
+			float sinPitch = sin(orbitPitch);
+			float cosYaw = cos(orbitYaw);
+			float sinYaw = sin(orbitYaw);
+
+			camera.Position = orbitTarget + glm::vec3(
+				orbitRadius * cosPitch * cosYaw,
+				orbitRadius * sinPitch,
+				orbitRadius * cosPitch * sinYaw
+			);
+
+			glm::vec3 front = glm::normalize(orbitTarget - camera.Position);
+			camera.Front = front;
+			camera.Right = glm::normalize(glm::cross(front, camera.WorldUp));
+			camera.Up = glm::normalize(glm::cross(camera.Right, front));
+			camera.LookAtPos = orbitTarget;
+		}
+
+
 		if (!onFreeCam)
 		{
 			SceneRotateY = 0.0f;
@@ -905,15 +1108,6 @@ int main() {
 		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		// FOKUS KE PLANET YANG DIKLIK
-		if (PlanetClicked && SelectedPlanet != -1)
-		{
-			glm::vec3 target = PlanetsPositions[SelectedPlanet];
-
-			// kamera smooth follow (lerp)
-			camera.Position = glm::mix(camera.Position, target + glm::vec3(0, 40, 120), 0.03f);
-			camera.LookAtPos = target;
-		}
 		if (!camera.FreeCam && PlanetView == 0 && !PlanetClicked)
 		{
 			float cosPitch = cos(orbitPitch);
@@ -963,23 +1157,37 @@ int main() {
 		/* SUN */
 
 		/* MERCURY */
-		double xx = sin(glfwGetTime() * PlanetSpeed) * 100.0f *2.0f *1.3f;
-		double zz = cos(glfwGetTime() * PlanetSpeed) * 100.0f *2.0f *1.3f;
+		double xx = sin(glfwGetTime() * PlanetSpeed) * 100.0f * 2.0f * 1.3f;
+		double zz = cos(glfwGetTime() * PlanetSpeed) * 100.0f * 2.0f * 1.3f;
+
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_mercury);
+
 		glm::mat4 model_mercury = glm::mat4(1.0f);
 		model_mercury = glm::translate(model_mercury, point);
 		model_mercury = glm::rotate(model_mercury, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		model_mercury = glm::rotate(model_mercury, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
 		model_mercury = glm::translate(model_mercury, glm::vec3(xx, 0.0f, zz));
+
 		PlanetsPositions[0] = glm::vec3(xx, 0.0f, zz);
+
 		model_mercury = glm::rotate(model_mercury, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.f));
-		model_mercury = glm::rotate(model_mercury, (GLfloat)glfwGetTime() * glm::radians(-90.0f) * 0.05f, glm::vec3(0.0f, 0.0f, 1.f));
-		if (PlanetClicked && SelectedPlanet == 0)
-			model_mercury = glm::scale(model_mercury, glm::vec3(1.5f));
+		model_mercury = glm::rotate(model_mercury,
+			(GLfloat)glfwGetTime() * glm::radians(-90.0f) * 0.05f,
+			glm::vec3(0.0f, 0.0f, 1.f));
+
+		// ========== HOVER HIGHLIGHT ==========
+		if (!PlanetClicked && hoveredPlanet == 0)
+			model_mercury = glm::scale(model_mercury, glm::vec3(1.2f));
+
+		// NOTE:
+		// Tidak pakai lagi "PlanetClicked && SelectedPlanet == 0"
+		// karena zoom-in kamera yang menangani interaksi klik.
+
 		SimpleShader.setMat4("model", model_mercury);
 		Mercury.Draw();
 		/* MERCURY */
+
 
 		/* VENUS */
 		xx = sin(glfwGetTime() * PlanetSpeed *0.75f) * 100.0f * 3.0f *1.3f;
@@ -1176,48 +1384,132 @@ int main() {
 		/* ORBITS */
 
 		// =======================================
-		// AUTO ZOOM KE PLANET YANG DIKLIK
+		// ANIMASI KAMERA: ZOOM-IN & ZOOM-OUT PLANET
 		// =======================================
-		if (PlanetClicked && SelectedPlanet != -1)
+		if (!camera.FreeCam && PlanetView == 0)   // khusus OrbitCam
 		{
-			glm::vec3 target = PlanetsPositions[SelectedPlanet];
+			if (isMovingToPlanet && SelectedPlanet != -1)
+			{
+				// Posisi & target mendekati planet
+				camera.Position = glm::mix(camera.Position, targetCameraPos, 0.03f);
+				camera.LookAtPos = glm::mix(camera.LookAtPos, PlanetsPositions[SelectedPlanet], 0.1f);
 
-			camera.Position = glm::mix(camera.Position, target + glm::vec3(0, 40, 120), 0.03f);
-			camera.LookAtPos = target;
+				if (glm::distance(camera.Position, targetCameraPos) < 20.0f)
+				{
+					isMovingToPlanet = false;
+					showPlanetInfo = true;
+
+					// Jadikan planet sebagai pusat orbit lokal
+					orbitTarget = PlanetsPositions[SelectedPlanet];
+					orbitRadius = glm::distance(camera.Position, orbitTarget);
+
+					// Hitung yaw & pitch dari vektor planet → kamera
+					glm::vec3 dir = camera.Position - orbitTarget;
+					dir = glm::normalize(dir);
+
+					// yaw: sudut di plane XZ
+					orbitYaw = atan2(dir.z, dir.x);
+					// pitch: sudut vertikal
+					orbitPitch = asin(dir.y);
+
+					// Pastikan LookAtPos tepat ke planet
+					camera.LookAtPos = orbitTarget;
+				}
+			}
+			else if (isZoomingOut)
+			{
+				// Balik ke posisi orbit awal
+				camera.Position = glm::mix(camera.Position, initialCameraPos, 0.05f);
+				camera.LookAtPos = glm::mix(camera.LookAtPos, initialTargetPos, 0.05f);
+
+				if (glm::distance(camera.Position, initialCameraPos) < 1.0f)
+				{
+					isZoomingOut = false;
+					PlanetClicked = false;
+					SelectedPlanet = -1;
+					showPlanetInfo = false;
+				}
+			}
 		}
 
 		// =======================================
 		// PLANET DESCRIPTION BOX
 		// =======================================
-		if (PlanetClicked && SelectedPlanet != -1)
+		if (showPlanetInfo && PlanetClicked && SelectedPlanet != -1)
 		{
-			float boxX = 20;
-			float boxY = SCREEN_HEIGHT - 20;
-			float boxW = 420;
-			float boxH = 200;
+			// Panel lebih besar dan agak turun dikit
+			float boxW = 520.0f;
+			float boxH = 260.0f;
+			float boxX = 40.0f;
+			float boxY = SCREEN_HEIGHT - 60.0f;
 
-			DrawInfoBackground(boxX, boxY, boxW, boxH);
+			DrawInfoBackground(TextShader, boxX, boxY, boxW, boxH);
+
+			// Tombol X di pojok kanan atas panel
+			float closeSize = 24.0f;
+			float closeX = boxX + boxW - closeSize - 20.0f;
+			float closeY = boxY - 30.0f;
+
+			RenderText(TextShader, "X", closeX, closeY, 0.8f, glm::vec3(1.0f));
+
+			// Layout teks: title + detail
+			float titleX = boxX + 25.0f;
+			float titleY = boxY - 40.0f;
+
+			float labelX = boxX + 25.0f;
+			float valueX = boxX + 220.0f;
+			float rowY = boxY - 80.0f;
+			float gap = 28.0f;
 
 			switch (SelectedPlanet)
 			{
-			case 0:
-				RenderText(TextShader, "MERCURY", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
-				RenderText(TextShader, "Smallest planet", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
-				RenderText(TextShader, "No atmosphere", boxX + 20, boxY - 105, 0.45f, glm::vec3(1));
+			case 0: // MERCURY
+				RenderText(TextShader, "Mercury", titleX, titleY, 0.8f, glm::vec3(1.0f, 1.0f, 1.0f));
+
+				RenderText(TextShader, "Radius", labelX, rowY, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 2,439.7 km", valueX, rowY, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Tilt", labelX, rowY - gap, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 0.03 deg", valueX, rowY - gap, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Rotation", labelX, rowY - gap * 2, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 59 Earth days", valueX, rowY - gap * 2, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Orbit", labelX, rowY - gap * 3, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 88 Earth days", valueX, rowY - gap * 3, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Distance", labelX, rowY - gap * 4, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 57.9 million km", valueX, rowY - gap * 4, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Moons", labelX, rowY - gap * 5, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 0", valueX, rowY - gap * 5, 0.5f, glm::vec3(1.0f));
+
 				break;
 
-			case 1:
-				RenderText(TextShader, "VENUS", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
-				RenderText(TextShader, "Hottest planet", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
-				RenderText(TextShader, "Toxic atmosphere", boxX + 20, boxY - 105, 0.45f, glm::vec3(1));
+			case 1: // VENUS
+				RenderText(TextShader, "Venus", titleX, titleY, 0.8f, glm::vec3(1.0f, 1.0f, 1.0f));
+
+				RenderText(TextShader, "Radius", labelX, rowY, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 6,051.8 km", valueX, rowY, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Tilt", labelX, rowY - gap, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 177.4 deg", valueX, rowY - gap, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Rotation", labelX, rowY - gap * 2, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 243 Earth days", valueX, rowY - gap * 2, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Orbit", labelX, rowY - gap * 3, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 225 Earth days", valueX, rowY - gap * 3, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Distance", labelX, rowY - gap * 4, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 108.2 million km", valueX, rowY - gap * 4, 0.5f, glm::vec3(1.0f));
+
+				RenderText(TextShader, "Moons", labelX, rowY - gap * 5, 0.5f, glm::vec3(1.0f));
+				RenderText(TextShader, ": 0", valueX, rowY - gap * 5, 0.5f, glm::vec3(1.0f));
+
 				break;
 
-			case 2:
-				RenderText(TextShader, "EARTH", boxX + 20, boxY - 40, 0.6f, glm::vec3(1, 1, 0));
-				RenderText(TextShader, "The only planet with life", boxX + 20, boxY - 75, 0.45f, glm::vec3(1));
-				break;
-
-				// lanjutkan untuk planet lain...
+				// lanjutkan sendiri Earth, Mars, dst pakai pola yang sama
 			}
 		}
 
@@ -1370,38 +1662,25 @@ int main() {
 
 		case 0:
 		{
-			float boxX = 20.0f;
-			float boxY = SCREEN_HEIGHT - 20.0f;
 			float boxW = 360.0f;
-			float boxH = 180.0f;
+			float boxH = 190.0f;
+			float boxX = 30.0f;
+			float boxY = SCREEN_HEIGHT - 30.0f; // jangan mepet banget ke atas
 
-			// panggil kotaknya dulu
-			DrawInfoBackground(boxX, boxY, boxW, boxH);
+			DrawInfoBackground(TextShader, boxX, boxY, boxW, boxH);
 
-			// Title
-			RenderText(TextShader, "SOLAR SYSTEM INFO",
-				boxX + 15, boxY - 30, 0.55f, glm::vec3(1.0f, 0.95f, 0.2f));
-
-			// Left label & right value columns
-			float L = boxX + 20;
-			float R = boxX + 180;
-			float row = boxY - 65;
-			float gap = 28;
-
-			RenderText(TextShader, "Sun", L, row, 0.45f, glm::vec3(1.0f));
-			RenderText(TextShader, ": 1", R, row, 0.45f, glm::vec3(1.0f));
-
-			RenderText(TextShader, "Planets", L, row - gap, 0.45f, glm::vec3(1.0f));
-			RenderText(TextShader, ": 8 (maybe 9)", R, row - gap, 0.45f, glm::vec3(1.0f));
-
-			RenderText(TextShader, "Satellites", L, row - gap * 2, 0.45f, glm::vec3(1.0f));
-			RenderText(TextShader, ": 415", R, row - gap * 2, 0.45f, glm::vec3(1.0f));
-
-			RenderText(TextShader, "Comets", L, row - gap * 3, 0.45f, glm::vec3(1.0f));
-			RenderText(TextShader, ": 3441", R, row - gap * 3, 0.45f, glm::vec3(1.0f));
-
-			break;
-			}
+			RenderText(TextShader, "SOLAR SYSTEM INFO", boxX + 20, boxY - 40, 0.7f, glm::vec3(1.0f, 1.0f, 0.2f));
+			RenderText(TextShader, "Sun", boxX + 20, boxY - 80, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 1", boxX + 150, boxY - 80, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, "Planets", boxX + 20, boxY - 80 - 28, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 8", boxX + 150, boxY - 80 - 28, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, "Satellites", boxX + 20, boxY - 80 - 56, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 415", boxX + 150, boxY - 80 - 56, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, "Comets", boxX + 20, boxY - 80 - 84, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, ": 3441", boxX + 150, boxY - 80 - 84, 0.5f, glm::vec3(1.0f));
+		}
+		break;
+			
 		}
 
 		if (planetCamActive)
