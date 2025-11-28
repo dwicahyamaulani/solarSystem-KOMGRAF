@@ -167,6 +167,10 @@
     <None Include="TextShader.vs" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="Sparkle.vs" />
+    <Text Include="Sparkle.fs" />
+    <Text Include="asteroid.vs" />
+    <Text Include="asteroid.fs" />
     <Text Include="UIRect.fs" />
     <Text Include="UIRect.vs" />
   </ItemGroup>

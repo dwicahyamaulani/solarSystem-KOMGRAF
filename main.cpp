@@ -823,6 +823,9 @@ int main() {
 	Shader texShader("simpleVS.vs", "texFS.fs");
 	Shader TextShader("TextShader.vs", "TextShader.fs");
 	Shader RectShader("UIRect.vs", "UIRect.fs");
+Shader AsteroidShader("asteroid.vs", "asteroid.fs");
+
+
 
 	/* SHADERS */
 
@@ -961,20 +964,27 @@ int main() {
 	/* VAO-VBO for ORBITS*/
 
 	// =======================================
-//  SPARKLE BELT (BATU-BATU KECIL DI ORBIT)
+//  SPARKLE BELT (ASTEROID BELT BARU)
+//  Ditempatkan antara Mars - Jupiter
 // =======================================
-	int numSparkles = 2000;
-	float radiusInner = 120.0f;  // dekat matahari
-	float radiusOuter = 400.0f;  // agak luar
+
+	int numSparkles = 1200;         // tidak terlalu banyak
+	float radiusInner = 650.0f;     // setelah Mars
+	float radiusOuter = 750.0f;     // sebelum Jupiter
 
 	for (int i = 0; i < numSparkles; ++i)
 	{
+		// random angle 0–360
 		float angle = ((float)rand() / RAND_MAX) * 2.0f * (float)M_PI;
+
+		// random radius dalam range
 		float radius = radiusInner + ((float)rand() / RAND_MAX) * (radiusOuter - radiusInner);
 
 		float x = sin(angle) * radius;
 		float z = cos(angle) * radius;
-		float y = ((float)rand() / RAND_MAX) * 6.0f - 3.0f; // sedikit sebaran vertikal
+
+		// sedikit variasi vertikal
+		float y = ((float)rand() / RAND_MAX) * 6.0f - 3.0f;
 
 		sparkleVertices.emplace_back(x, y, z);
 	}
@@ -1474,20 +1484,25 @@ int main() {
 		glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)orbVert.size() / 3);
 		/* ORBITS */
 
-		// =======================
-		// DRAW SPARKLES
-		// =======================
+		// // =======================
+// DRAW SPARKLES
+// =======================
+		AsteroidShader.Use();
+		AsteroidShader.setFloat("uTime", glfwGetTime());
 		glBindVertexArray(sparkleVAO);
 		glPointSize(2.5f);  // besar bintik
 
 		glm::mat4 sm = glm::mat4(1.0f);
-		sm = glm::translate(sm, point); // sama pusatnya dengan Sun / orbit
+		sm = glm::translate(sm, point);
 		sm = glm::rotate(sm, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
 		sm = glm::rotate(sm, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
-		SimpleShader.setMat4("model", sm);
 
+		AsteroidShader.setMat4("model", sm);
+		AsteroidShader.setMat4("view", view);
+		AsteroidShader.setMat4("projection", projection);
 		glDrawArrays(GL_POINTS, 0, (GLsizei)sparkleVertices.size());
 		glBindVertexArray(0);
+
 
 		// =======================================
 		// ANIMASI KAMERA: ZOOM-IN & ZOOM-OUT PLANET
@@ -1649,27 +1664,31 @@ int main() {
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_saturn_ring);
 		glLineWidth(2.0f);
+
+		glBindVertexArray(VAO_t);   // WAJIB!!
+
 		GLfloat rr = 0.55f;
 		for (int i = 0; i < 25; i++)
 		{
 			modelorb = glm::mat4(1);
-			
-			modelorb = glm::rotate(modelorb, glm::radians(SceneRotateY), glm::vec3(1.0f, 0.0f, 0.0f));
-			modelorb = glm::rotate(modelorb, glm::radians(SceneRotateX), glm::vec3(0.0f, 0.0f, 1.0f));
+
+			modelorb = glm::rotate(modelorb, glm::radians(SceneRotateY), glm::vec3(1, 0, 0));
+			modelorb = glm::rotate(modelorb, glm::radians(SceneRotateX), glm::vec3(0, 0, 1));
 			modelorb = glm::translate(modelorb, SatrunPoint);
-			modelorb = glm::rotate(modelorb, glm::radians(30.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+			modelorb = glm::rotate(modelorb, glm::radians(30.0f), glm::vec3(0, 0, 1));
 			modelorb = glm::scale(modelorb, glm::vec3(rr, rr, rr));
+
 			SimpleShader.setMat4("model", modelorb);
+
 			glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)orbVert.size() / 3);
-			if (i == 15)
-				rr += 0.030f;
-			else
-				rr += 0.01f;
+
+			rr += (i == 15 ? 0.030f : 0.01f);
 		}
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, texture_venus);
-		glBindVertexArray(0);
+
+		glBindVertexArray(0);                 // Unbind VAO setelah selesai
+		glBindTexture(GL_TEXTURE_2D, 0);      // Hapus texture agar tidak bentrok
 		/* SATURN RINGS */
+
 
 
 		/* DRAW SKYBOX */
@@ -1682,9 +1701,9 @@ int main() {
 		glBindVertexArray(skyboxVAO);
 		glActiveTexture(GL_TEXTURE0);
 		if (SkyBoxExtra)
-			glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTextureExtra);
-		else
 			glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+		else
+			glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTextureExtra);
 		glDrawArrays(GL_TRIANGLES, 0, 36);
 		glBindVertexArray(0);
 		glDepthFunc(GL_LESS);  
@@ -1803,7 +1822,7 @@ int main() {
 			DrawInfoBackground(TextShader, boxX, boxY, boxW, boxH);
 
 			// Title
-			RenderText(TextShader, "SOLAR SYSTEM INFO",
+			RenderText(TextShader, "SISTEM TATA SURYA",
 				boxX + 20, boxY - 40, 0.7f, glm::vec3(0.55f, 0.95f, 1.0f));
 
 			// ---- Layout Settings ----
@@ -1813,7 +1832,7 @@ int main() {
 			float gapY = 30.0f;          // <<< jarak antar baris
 
 			// Sun
-			RenderText(TextShader, "Sun", labelX, startY, 0.5f, glm::vec3(1.0f));
+			RenderText(TextShader, "Matahari", labelX, startY, 0.5f, glm::vec3(1.0f));
 			RenderText(TextShader, ": 1", valueX, startY, 0.5f, glm::vec3(1.0f));
 
 			// Planets

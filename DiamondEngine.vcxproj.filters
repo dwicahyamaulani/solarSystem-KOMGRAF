@@ -76,5 +76,17 @@
     <Text Include="UIRect.fs">
       <Filter>Shaders</Filter>
     </Text>
+    <Text Include="Sparkle.vs">
+      <Filter>Shaders</Filter>
+    </Text>
+    <Text Include="Sparkle.fs">
+      <Filter>Shaders</Filter>
+    </Text>
+    <Text Include="asteroid.vs">
+      <Filter>Shaders</Filter>
+    </Text>
+    <Text Include="asteroid.fs">
+      <Filter>Shaders</Filter>
+    </Text>
   </ItemGroup>
 </Project>
